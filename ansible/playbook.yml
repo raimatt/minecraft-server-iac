@@ -9,6 +9,7 @@
 - name: Configure the Acme Corp Minecraft server
   hosts: minecraft
   become: true
+  gather_facts: false
 
   vars:
     # 1.21.11 is the version used in Part 1. It requires Java 21, which is
