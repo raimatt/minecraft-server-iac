@@ -1,0 +1,36 @@
+[Unit]
+Description=Minecraft Server (Acme Corp)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory={{ mc_dir }}
+User={{ mc_user }}
+Group={{ mc_user }}
+
+# Part 1 set StandardInput=null, so the server had no console to read from
+# and there was no way to send it a "stop" command. That is why it never shut
+# down cleanly. Here we create a named pipe and feed it into the server's
+# input, so the service can send real commands to the running server.
+ExecStartPre=/usr/bin/bash -c 'rm -f {{ mc_dir }}/console.in; mkfifo -m 0660 {{ mc_dir }}/console.in'
+ExecStart=/usr/bin/bash -c 'tail -n +1 -f {{ mc_dir }}/console.in | /usr/bin/java -Xms{{ heap_size }} -Xmx{{ heap_size }} -jar server.jar nogui'
+
+# On stop, send the real in game commands so the server warns players, saves
+# the world, and stops cleanly instead of being killed mid write.
+ExecStop=/usr/bin/bash -c 'echo "say Server is shutting down in 5 seconds" > {{ mc_dir }}/console.in'
+ExecStop=/bin/sleep 5
+ExecStop=/usr/bin/bash -c 'echo "save-all" > {{ mc_dir }}/console.in'
+ExecStop=/bin/sleep 5
+ExecStop=/usr/bin/bash -c 'echo "stop" > {{ mc_dir }}/console.in'
+ExecStopPost=/usr/bin/bash -c 'rm -f {{ mc_dir }}/console.in'
+
+# Give the server time to finish saving before systemd gives up on it.
+TimeoutStopSec=90
+
+# Bring the server back automatically if it crashes.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+# This line is what makes the server start again on its own after a reboot.
+WantedBy=multi-user.target

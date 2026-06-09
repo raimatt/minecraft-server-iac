@@ -1,0 +1,9 @@
+# Copy this file to terraform.tfvars and change anything you like.
+# All of these have sensible defaults, so you can also just leave it empty.
+
+# aws_region    = "us-east-1"
+# instance_type = "t3.medium"
+
+# For a little more safety, lock SSH to your own public IP.
+# Find your IP at https://ifconfig.me then put it here with /32 on the end.
+# allowed_ssh_cidr = "203.0.113.10/32"

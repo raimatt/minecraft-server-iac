@@ -1,0 +1,131 @@
+---
+# This playbook configures a fresh Amazon Linux 2023 server into a working
+# Minecraft server. It uses the same OS and Java (Amazon Corretto 21) as the
+# manual Part 1 setup, then improves on it. Ansible connects over SSH
+# automatically using the key Terraform generated. This is the configuration
+# management tool the assignment asks for, and it is not the same as a person
+# opening a terminal and typing ssh.
+
+- name: Configure the Acme Corp Minecraft server
+  hosts: minecraft
+  become: true
+
+  vars:
+    # 1.21.11 is the version used in Part 1. It requires Java 21, which is
+    # installed below as Amazon Corretto. If you move to Minecraft 26.1 or
+    # newer, switch the java package to java-25-amazon-corretto-headless.
+    minecraft_version: "1.21.11"
+    java_package: "java-21-amazon-corretto-headless"
+    heap_size: "2G"
+    mc_user: "minecraft"
+    mc_dir: "/opt/minecraft"
+
+  pre_tasks:
+    - name: Wait until the server is reachable over SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+  tasks:
+    - name: Install Java (Amazon Corretto 21)
+      ansible.builtin.dnf:
+        name:
+          - "{{ java_package }}"
+        state: present
+        update_cache: true
+
+    - name: Create a dedicated minecraft user
+      ansible.builtin.user:
+        name: "{{ mc_user }}"
+        system: true
+        create_home: false
+        shell: /sbin/nologin
+
+    - name: Create the server directory
+      ansible.builtin.file:
+        path: "{{ mc_dir }}"
+        state: directory
+        owner: "{{ mc_user }}"
+        group: "{{ mc_user }}"
+        mode: "0755"
+
+    # ----- Find the correct server.jar download for the chosen version -----
+    - name: Download the Mojang version manifest
+      ansible.builtin.uri:
+        url: "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+        return_content: true
+      register: version_manifest
+
+    - name: Find the metadata URL for the chosen version
+      ansible.builtin.set_fact:
+        version_meta_url: "{{ (version_manifest.json.versions | selectattr('id', 'equalto', minecraft_version) | list | first).url }}"
+
+    - name: Download that version's metadata
+      ansible.builtin.uri:
+        url: "{{ version_meta_url }}"
+        return_content: true
+      register: version_meta
+
+    - name: Work out the server.jar download URL
+      ansible.builtin.set_fact:
+        server_jar_url: "{{ version_meta.json.downloads.server.url }}"
+
+    - name: Download the Minecraft server jar
+      ansible.builtin.get_url:
+        url: "{{ server_jar_url }}"
+        dest: "{{ mc_dir }}/server.jar"
+        owner: "{{ mc_user }}"
+        group: "{{ mc_user }}"
+        mode: "0644"
+
+    # ----- Accept the EULA and set a few server properties -----
+    - name: Accept the Minecraft EULA
+      ansible.builtin.copy:
+        dest: "{{ mc_dir }}/eula.txt"
+        content: "eula=true\n"
+        owner: "{{ mc_user }}"
+        group: "{{ mc_user }}"
+        mode: "0644"
+
+    - name: Create a basic server.properties
+      ansible.builtin.copy:
+        dest: "{{ mc_dir }}/server.properties"
+        content: |
+          server-port=25565
+          motd=Acme Corp Minecraft Server
+          max-players=20
+          online-mode=true
+          enable-command-block=false
+        owner: "{{ mc_user }}"
+        group: "{{ mc_user }}"
+        mode: "0644"
+        force: false
+
+    # ----- Install the systemd service with a graceful shutdown -----
+    - name: Install the systemd service file
+      ansible.builtin.template:
+        src: minecraft.service.j2
+        dest: /etc/systemd/system/minecraft.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Flush handlers so the unit is reloaded before we start it
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the Minecraft service
+      ansible.builtin.systemd:
+        name: minecraft
+        enabled: true
+        state: started
+
+    - name: Wait for the Minecraft port to start listening
+      ansible.builtin.wait_for:
+        port: 25565
+        delay: 10
+        timeout: 180
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
